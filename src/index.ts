@@ -136,43 +136,111 @@ type ExtractSourceValues<M extends SourceMap> = {
   [K in keyof M]: M[K] extends SourceDescriptor<infer T> ? T : never
 }
 
-export type CombinedStore<M extends SourceMap> = UseBoundStore<StoreApi<ExtractSourceValues<M>>> & {
-  /** Source descriptor for use in sample */
-  source<K extends keyof M & string>(key: K): SourceDescriptor<ExtractSourceValues<M>[K]>
-  /** Unsubscribe all internal subscriptions */
-  destroy(): void
+// Preserves tuple types: [SourceDescriptor<A>, SourceDescriptor<B>] → [A, B]
+type ExtractSourceArray<S extends ReadonlyArray<SourceDescriptor<any>>> = {
+  [K in keyof S]: S[K] extends SourceDescriptor<infer T> ? T : never
 }
 
 /**
- * Derives a new Zustand store by combining multiple source descriptors.
- * Updates atomically whenever any source store changes.
- *
- * @example
- * const useSummary = combine({
- *   bears:  useBear.source('bears'),
- *   salmon: useBear.source('salmon'),
- * })
+ * Plain object form — state mirrors the source map shape.
+ * Access individual keys via .source('key').
  */
-export function combine<M extends SourceMap>(sources: M): CombinedStore<M> {
-  type Combined = ExtractSourceValues<M>
+export type CombinedStore<M extends SourceMap> =
+  UseBoundStore<StoreApi<ExtractSourceValues<M>>> & {
+    source<K extends keyof M & string>(key: K): SourceDescriptor<ExtractSourceValues<M>[K]>
+    destroy(): void
+  }
+
+/**
+ * Derived form (fn or array) — state is `{ value: R }`.
+ * Access the derived value via .source('value') or .source().
+ */
+export type CombinedValueStore<R> =
+  UseBoundStore<StoreApi<{ value: R }>> & {
+    source(key?: 'value'): SourceDescriptor<R>
+    destroy(): void
+  }
+
+// ── Overloads ─────────────────────────────────────────────────────────────────
+
+/** Plain object — state mirrors source map */
+export function combine<M extends SourceMap>(
+  sources: M,
+): CombinedStore<M>
+
+/** Object + fn — derives a single value */
+export function combine<M extends SourceMap, R>(
+  sources: M,
+  fn: (values: ExtractSourceValues<M>) => R,
+): CombinedValueStore<R>
+
+/** Array — state is `{ value: [T1, T2, ...] }` preserving tuple */
+export function combine<S extends ReadonlyArray<SourceDescriptor<any>>>(
+  sources: S,
+): CombinedValueStore<ExtractSourceArray<S>>
+
+/** Array + fn — derives a single value from the tuple */
+export function combine<S extends ReadonlyArray<SourceDescriptor<any>>, R>(
+  sources: S,
+  fn: (values: ExtractSourceArray<S>) => R,
+): CombinedValueStore<R>
+
+// ── Implementation ────────────────────────────────────────────────────────────
+
+export function combine(
+  sources: SourceMap | ReadonlyArray<SourceDescriptor<any>>,
+  fn?: (values: any) => any,
+): any {
+  const isArray = Array.isArray(sources)
+
+  // ── Array form  or  Object + fn  →  { value: R } ──────────────────────────
+  if (isArray || fn !== undefined) {
+    const srcEntries: Array<[string, SourceDescriptor<any>]> = isArray
+      ? (sources as ReadonlyArray<SourceDescriptor<any>>).map((s, i) => [String(i), s])
+      : Object.entries(sources as SourceMap)
+
+    const readValues = (): any =>
+      isArray
+        ? (sources as ReadonlyArray<SourceDescriptor<any>>).map(s => s._store.getState()[s._key])
+        : Object.fromEntries(srcEntries.map(([k, s]) => [k, s._store.getState()[s._key]]))
+
+    const compute = () => ({ value: fn ? fn(readValues()) : readValues() })
+
+    const store = create<{ value: unknown }>()(subscribeWithSelector(compute))
+
+    const unsubs = srcEntries.map(([, s]) =>
+      (s._store as any).subscribe(
+        (state: any) => state[s._key],
+        () => store.setState(compute()),
+      ),
+    )
+
+    const combined = store as unknown as CombinedValueStore<any>
+    combined.source  = () => ({ _store: store as any, _key: 'value' })
+    combined.destroy = () => unsubs.forEach(u => u())
+    return combined
+  }
+
+  // ── Plain object form  →  { [key]: value } ────────────────────────────────
+  const sourcesMap = sources as SourceMap
+  type Combined = ExtractSourceValues<typeof sourcesMap>
 
   const snapshot = (): Combined =>
     Object.fromEntries(
-      Object.entries(sources).map(([k, s]) => [k, s._store.getState()[s._key]]),
+      Object.entries(sourcesMap).map(([k, s]) => [k, s._store.getState()[s._key]]),
     ) as Combined
 
   const store = create<Combined>()(subscribeWithSelector(snapshot))
 
-  const unsubs = Object.entries(sources).map(([k, s]) =>
+  const unsubs = Object.entries(sourcesMap).map(([k, s]) =>
     (s._store as any).subscribe(
       (state: Record<string, unknown>) => state[s._key],
       (val: unknown) => store.setState(prev => ({ ...prev, [k]: val })),
     ),
   )
 
-  const combined = store as unknown as CombinedStore<M>
+  const combined = store as unknown as CombinedStore<typeof sourcesMap>
   combined.source  = (key: any) => ({ _store: store as any, _key: key })
   combined.destroy = () => unsubs.forEach(u => u())
-
   return combined
 }

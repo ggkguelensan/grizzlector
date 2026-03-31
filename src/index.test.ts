@@ -269,3 +269,115 @@ describe('combine', () => {
     expect(combined.getState()).toEqual({ x: 10, y: 20 })
   })
 })
+
+// ─── combine — new forms ──────────────────────────────────────────────────────
+
+describe('combine — object + fn', () => {
+  it('derives a single value from the combined object', () => {
+    const useStore = createSamplable((set) => ({
+      x: 3,
+      y: 4,
+      setX: (v: number) => set({ x: v }),
+    }))
+
+    const useHyp = combine(
+      { x: useStore.source('x'), y: useStore.source('y') },
+      ({ x, y }: { x: number; y: number }) => Math.hypot(x, y),
+    )
+
+    expect(useHyp.getState()).toEqual({ value: 5 })
+
+    useStore.getState().setX(0)
+    expect(useHyp.getState()).toEqual({ value: 4 })
+  })
+
+  it('can be used as source in sample', () => {
+    const useStore = createSamplable((set) => ({
+      a: 10,
+      b: 3,
+      result: 0,
+      fire:      () => {},
+      setA:      (v: number) => set({ a: v }),
+      setResult: (v: number) => set({ result: v }),
+    }))
+
+    const useRatio = combine(
+      { a: useStore.source('a'), b: useStore.source('b') },
+      ({ a, b }: { a: number; b: number }) => a / b,
+    )
+
+    sample({
+      clock:  useStore.clock('fire'),
+      source: useRatio.source(),   // .source() with no arg — convenience alias for 'value'
+      fn:     (ratio) => Math.round(ratio as number * 100) / 100,
+      target: useStore.target('setResult'),
+    })
+
+    useStore.getState().fire()
+    expect(useStore.getState().result).toBeCloseTo(3.33)
+
+    useStore.getState().setA(6)
+    useStore.getState().fire()
+    expect(useStore.getState().result).toBe(2)
+  })
+})
+
+describe('combine — array form', () => {
+  it('state is { value: [v1, v2, ...] } reflecting source order', () => {
+    const useA = createSamplable((set) => ({ x: 1, setX: (v: number) => set({ x: v }) }))
+    const useB = createSamplable((set) => ({ y: 2, setY: (v: number) => set({ y: v }) }))
+
+    const combined = combine([useA.source('x'), useB.source('y')])
+
+    expect(combined.getState()).toEqual({ value: [1, 2] })
+
+    useA.getState().setX(10)
+    expect(combined.getState()).toEqual({ value: [10, 2] })
+
+    useB.getState().setY(20)
+    expect(combined.getState()).toEqual({ value: [10, 20] })
+  })
+
+  it('array + fn transforms the tuple', () => {
+    const useA = createSamplable((set) => ({ x: 3, setX: (v: number) => set({ x: v }) }))
+    const useB = createSamplable((set) => ({ y: 4, setY: (v: number) => set({ y: v }) }))
+
+    const useSum = combine(
+      [useA.source('x'), useB.source('y')],
+      ([x, y]: number[]) => x + y,
+    )
+
+    expect(useSum.getState()).toEqual({ value: 7 })
+
+    useA.getState().setX(10)
+    expect(useSum.getState()).toEqual({ value: 14 })
+  })
+
+  it('array combined store can be used as source in sample', () => {
+    const useA = createSamplable((set) => ({ x: 5, setX: (v: number) => set({ x: v }) }))
+    const useB = createSamplable((set) => ({
+      y:         2,
+      result:    0,
+      fire:      () => {},
+      setResult: (v: number) => set({ result: v }),
+    }))
+
+    const combined = combine(
+      [useA.source('x'), useB.source('y')],
+      ([x, y]: number[]) => x * y,
+    )
+
+    sample({
+      clock:  useB.clock('fire'),
+      source: combined.source(),
+      target: useB.target('setResult'),
+    })
+
+    useB.getState().fire()
+    expect(useB.getState().result).toBe(10)
+
+    useA.getState().setX(3)
+    useB.getState().fire()
+    expect(useB.getState().result).toBe(6)
+  })
+})
