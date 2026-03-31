@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 
 // ─── Internal event bus ───────────────────────────────────────────────────────
@@ -26,28 +26,29 @@ export type ClockDescriptor = {
 }
 
 export type SourceDescriptor<T = unknown> = {
-  readonly _store: { getState(): Record<string, unknown> }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly _store: { getState(): any; subscribe(sel: any, cb: any): () => void }
   readonly _key: string
   readonly _phantom?: T
 }
 
 export type TargetDescriptor = {
-  readonly _store: { getState(): Record<string, unknown> }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly _store: { getState(): any }
   readonly _name: string
 }
 
 // ─── createSamplable ──────────────────────────────────────────────────────────
 
-type ZustandStore<S> = ReturnType<typeof create<S>>
-
-export type SamplableStore<S extends Record<string, unknown>> = ZustandStore<S> & {
-  /** Clock descriptor — fires when the named action is called */
-  clock(name: keyof S & string): ClockDescriptor
-  /** Source descriptor — reads the named state key */
-  source<K extends keyof S & string>(key: K): SourceDescriptor<S[K]>
-  /** Target descriptor — calls the named action */
-  target(name: keyof S & string): TargetDescriptor
-}
+export type SamplableStore<S extends Record<string, unknown>> =
+  UseBoundStore<StoreApi<S>> & {
+    /** Clock descriptor — fires when the named action is called */
+    clock(name: keyof S & string): ClockDescriptor
+    /** Source descriptor — reads the named state key */
+    source<K extends keyof S & string>(key: K): SourceDescriptor<S[K]>
+    /** Target descriptor — calls the named action */
+    target(name: keyof S & string): TargetDescriptor
+  }
 
 export function createSamplable<S extends Record<string, unknown>>(
   init: (set: any, get: () => S, api: any) => S,
@@ -135,7 +136,7 @@ type ExtractSourceValues<M extends SourceMap> = {
   [K in keyof M]: M[K] extends SourceDescriptor<infer T> ? T : never
 }
 
-export type CombinedStore<M extends SourceMap> = ZustandStore<ExtractSourceValues<M>> & {
+export type CombinedStore<M extends SourceMap> = UseBoundStore<StoreApi<ExtractSourceValues<M>>> & {
   /** Source descriptor for use in sample */
   source<K extends keyof M & string>(key: K): SourceDescriptor<ExtractSourceValues<M>[K]>
   /** Unsubscribe all internal subscriptions */
