@@ -1,0 +1,21 @@
+{
+  "name": "zustand-sampler",
+  "version": "0.1.0",
+  "description": "Effector-style sample and combine for Zustand",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "zustand": ">=4"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^1.6.0",
+    "zustand": "^4.5.0"
+  }
+}
